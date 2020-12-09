@@ -1,0 +1,234 @@
+service: AWSBatchExample
+
+plugins:
+  - '@anttiviljami/serverless-stack-output'
+
+provider:
+  name: aws
+  region: ${opt:region, 'eu-central-1'}
+
+resources:
+  Resources:
+    BatchServiceRole:
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: "BatchServiceRole-${self:provider.region}"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Action: "sts:AssumeRole"
+              Effect: Allow
+              Principal:
+                Service: "batch.amazonaws.com"
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole"
+
+    SpotBatchComputeEnvironment:
+      Type: AWS::Batch::ComputeEnvironment
+      Properties:
+        ComputeEnvironmentName: "spot-compute-env-${self:provider.region}"
+        ComputeResources:
+          DesiredvCpus: 0
+          InstanceRole: !Ref Ec2InstanceProfile
+          InstanceTypes:
+            - "c4.large"
+          MaxvCpus: 128
+          MinvCpus: 0
+          SecurityGroupIds:
+            - !Ref BatchSecurityGroup
+          Subnets:
+            - !Ref BatchSubnet
+
+          AllocationStrategy: SPOT_CAPACITY_OPTIMIZED
+          BidPercentage: 50
+          SpotIamFleetRole: !Ref SpotFleetRole
+          Type: SPOT
+        Type: MANAGED
+
+        ServiceRole: !Ref BatchServiceRole
+        State: ENABLED
+
+    Ec2InstanceRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "Ec2InstanceRole-${self:provider.region}"
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Action: "sts:AssumeRole"
+              Effect: Allow
+              Principal:
+                Service: ec2.amazonaws.com
+        Policies:
+          - PolicyName: "DynamoAccess"
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - dynamodb:PutItem
+                    - dynamodb:Query
+                    - dynamodb:UpdateItem
+                    - dynamodb:DeleteItem
+                    - dynamodb:GetItem
+                  Resource:
+                    - !GetAtt DynamoTable.Arn
+
+    Ec2InstanceProfile:
+      Type: AWS::IAM::InstanceProfile
+      Properties:
+        InstanceProfileName: "Ec2InstanceProfile-${self:provider.region}"
+        Roles:
+          - !Ref Ec2InstanceRole
+
+    BatchInternetGateway:
+      Type: AWS::EC2::InternetGateway
+
+    BatchJobDefinition:
+      Type: "AWS::Batch::JobDefinition"
+      Properties:
+          ContainerProperties:
+            Command: ["python", "md5_brute_force.py"]
+            Environment:
+              - Name: DYNAMO_TABLE
+                Value: !Ref DynamoTable
+              - Name: AWS_DEFAULT_REGION
+                Value: ${self:provider.region}
+            Image: !Join ["", [!Ref "AWS::AccountId", ".dkr.ecr.${self:provider.region}.amazonaws.com/", !Ref ECRRepository]]
+            Memory: 1000
+            Vcpus: 1
+          JobDefinitionName: "job-definition-${self:provider.region}"
+          RetryStrategy:
+            Attempts: 1
+          Timeout:
+            AttemptDurationSeconds: 300
+          Type: container
+
+    SpotBatchJobQueue:
+      Type: "AWS::Batch::JobQueue"
+      Properties:
+        JobQueueName: "spot-job-queue-${self:provider.region}"
+        ComputeEnvironmentOrder:
+          - Order: 1
+            ComputeEnvironment: !Ref SpotBatchComputeEnvironment
+        Priority: 1
+
+    BatchVpcRouteToIG:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: '0.0.0.0/0'
+        GatewayId: !Ref BatchInternetGateway
+        RouteTableId: !Ref BatchRouteTable
+
+    BatchRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref BatchVpc
+
+    BatchSecurityGroup:
+      Type: "AWS::EC2::SecurityGroup"
+      Properties:
+        GroupDescription: "Allow all traffic"
+        VpcId: !Ref BatchVpc
+
+    BatchSubnet:
+      Type: "AWS::EC2::Subnet"
+      Properties:
+        CidrBlock: "173.31.0.0/16"
+        MapPublicIpOnLaunch: true
+        VpcId: !Ref BatchVpc
+        AvailabilityZone: !Join ["", ["${opt:region}", "b"]]
+
+    BatchSubnetRouteTable:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref BatchRouteTable
+        SubnetId: !Ref BatchSubnet
+
+    BatchVpc:
+      Type: "AWS::EC2::VPC"
+      Properties:
+        CidrBlock: "173.31.0.0/16"
+
+    BatchVPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        InternetGatewayId: !Ref BatchInternetGateway
+        VpcId: !Ref BatchVpc
+
+    SpotFleetRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: "SpotFleetRole-${self:provider.region}"
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole"
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: "spotfleet.amazonaws.com"
+              Action: "sts:AssumeRole"
+
+    ECRRepository:
+      Type: "AWS::ECR::Repository"
+      Properties:
+        RepositoryName: "ecr-repository-${self:provider.region}"
+        RepositoryPolicyText:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Sid: AllowAll
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - "ecr:*"
+
+    DynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        BillingMode: PAY_PER_REQUEST
+        TableName: 'dynamo-table-${self:provider.region}'
+        KeySchema:
+          - AttributeName: "ID"
+            KeyType: "HASH"
+        AttributeDefinitions:
+          - AttributeName: "ID"
+            AttributeType: "S"
+        TimeToLiveSpecification:
+          AttributeName: TTL
+          Enabled: true
+
+  Outputs:
+    ECRRepository:
+      Value: !Join ["", [!Ref "AWS::AccountId", ".dkr.ecr.${self:provider.region}.amazonaws.com/", !Ref ECRRepository]]
+      Export:
+        Name: ECRRepository-${self:provider.stage}
+
+    DynamoTable:
+      Value: !Ref DynamoTable
+      Export:
+        Name: DynamoTable-${self:provider.stage}
+
+    BatchQueue:
+      Value: !Ref SpotBatchJobQueue
+      Export:
+        Name: BatchQueue-${self:provider.stage}
+
+    JobDefinition:
+      Value: !Ref BatchJobDefinition
+      Export:
+        Name: JobDefinition-${self:provider.stage}
+
+    Region:
+      Value: ${self:provider.region}
+      Export:
+        Name: Region-${self:provider.stage}
+
+custom:
+  output:
+    file: ./sls-stack-output.json
+
+

@@ -1,0 +1,3 @@
+node_modules/
+sls-stack-output.json
+.serverless/
