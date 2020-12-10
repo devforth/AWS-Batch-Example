@@ -7,14 +7,14 @@ import hashlib
 import functools
 
 
-alphabet = list(string.ascii_lowercase)
+default_alphabet = list(string.ascii_lowercase + string.ascii_uppercase + string.digits)
 
 
-def strtoint(string, alphabet=alphabet):
-    return functools.reduce(lambda acc, ind: (acc * 26) + (ind + 1), map(alphabet.index, list(string)), 0)
+def strtoint(string, alphabet):
+    return functools.reduce(lambda acc, ind: (acc * len(alphabet)) + (ind + 1), map(alphabet.index, list(string)), 0)
 
 
-def inttostr(value, alphabet=alphabet):
+def inttostr(value, alphabet):
     chars = []
 
     while value > 0:
@@ -23,11 +23,15 @@ def inttostr(value, alphabet=alphabet):
 
     return ''.join(reversed(chars))
 
-def md5_brute_force(start, end, hex_md5):
+def md5_brute_force(start, end, hex_md5, alphabet):
     value = start
 
     while value < end:
-        string = inttostr(value)
+
+        if value % 100000 == 0:
+            print(value, end, (value - start) / (end - start))
+
+        string = inttostr(value, alphabet)
 
         if hashlib.md5(string.encode()).hexdigest() == hex_md5:
             return string
@@ -69,14 +73,19 @@ def get_input(dynamo_table, json_md5):
     return json.loads(item['Item']['input']['S'])
 
 
-def calculate_local(global_start, global_end, array_index, jobs_count):
-    int_start = strtoint(global_start)
-    int_end = strtoint(global_end)
+def calculate_local(min_length, max_length, array_index, jobs_count, alphabet):
+    global_start = alphabet[0] * int(min_length)
+    global_end = alphabet[-1] * int(max_length)
+
+    int_start = strtoint(global_start, alphabet)
+    int_end = strtoint(global_end, alphabet)
 
     step = math.ceil((int_end - int_start) / jobs_count)
 
     local_start = min(int_start + (step * array_index), int_end)
     local_end   = min(int_start + (step * (array_index + 1)), int_end)
+
+    print(local_start, local_end, local_end - local_start)
 
     return local_start, local_end
 
@@ -100,10 +109,11 @@ def batch_main():
     array_index, dynamo_table, jobs_count, json_md5 = get_env_inputs()
     input = get_input(dynamo_table, json_md5)
 
-    local_start, local_end = calculate_local(input['start'], input['end'], array_index, jobs_count)
+    alphabet = input.get('alphabet', None) or default_alphabet
 
-    md5 = input['md5']
-    result = md5_brute_force(local_start, local_end, md5)
+    local_start, local_end = calculate_local(input['minLength'], input['maxLength'], array_index, jobs_count, alphabet)
+
+    result = md5_brute_force(local_start, local_end, input['md5'], alphabet)
     if result is not None:
         save_result(dynamo_table, json_md5, result)
 

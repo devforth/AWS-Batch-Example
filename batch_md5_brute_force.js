@@ -62,7 +62,15 @@ async function waitForBatchJob(jobId) {
         }).promise();
 
         status = result.jobs[0].status;
-        console.log('Current status', status);
+        const statusSummary = result.jobs[0].arrayProperties ?
+            Object.keys(result.jobs[0].arrayProperties.statusSummary).reduce((acc, key) => {
+                if (result.jobs[0].arrayProperties.statusSummary[key] > 0) {
+                    acc.push(`${key}: ${result.jobs[0].arrayProperties.statusSummary[key]}`);
+                }
+                return acc;
+            }, [])
+        : '';
+        console.log('Current status', status, statusSummary);
         await sleep(1000);
     }
 
@@ -82,17 +90,17 @@ async function retrieveResult(jsonMD5) {
 async function main() {
     const argv = process.argv.slice(2);
 
-    if (argv.length !== 5) {
-        console.log('Not enought arguments. You must supply 4 arguments in that order: aws profile, brute force range start, brute force range end, hex formated md5, number of instances to use.');
+    if (argv.length !== 5 && argv.length !== 6) {
+        console.log('Not enought arguments. You must supply at least 5 arguments in that order: aws profile, brute force min length, brute force max length, hex formated md5, number of instances to use, <alphabet>.');
         process.exitCode = 1;
     }
 
-    const [profile, start, end, md5, instanceCount] = argv;
+    const [profile, minLength, maxLength, md5, instanceCount, alphabet] = argv;
 
     AWS.config.credentials = new AWS.SharedIniFileCredentials({ profile });
     AWS.config.region = slsStackOutput.Region;
 
-    const { jsonMD5, jobId } = await startBatchJob({ start, end, md5 }, instanceCount);
+    const { jsonMD5, jobId } = await startBatchJob({ minLength, maxLength, md5, alphabet }, instanceCount);
     await waitForBatchJob(jobId);
     const result = await retrieveResult(jsonMD5);
 

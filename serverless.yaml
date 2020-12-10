@@ -102,8 +102,6 @@ resources:
           JobDefinitionName: "job-definition-${self:provider.region}"
           RetryStrategy:
             Attempts: 1
-          Timeout:
-            AttemptDurationSeconds: 300
           Type: container
 
     SpotBatchJobQueue:
