@@ -1,5 +1,11 @@
 # AWS Batch Example #
 
+AWS Batch automated deployemnt configured with serverless.js framework.
+
+Example finds colissions of md5 hash. 
+
+For more information check [the hint](https://hinty.io/devforth/aws-batch-use-cloud-power-for-batch-processing-simple-example/)
+
 ## Prerequisites ##
 1. Node + Npm
 2. Docker
